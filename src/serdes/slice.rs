@@ -13,7 +13,6 @@ use core::{
 
 use serde::{
 	de::{
-		Deserialize,
 		Deserializer,
 		Error,
 		MapAccess,
@@ -22,10 +21,11 @@ use serde::{
 		Visitor,
 	},
 	ser::{
-		Serialize,
 		SerializeStruct,
-		Serializer,
+        Serializer,
 	},
+    Serialize,
+    Deserialize,
 };
 use wyz::comu::Const;
 
@@ -39,7 +39,11 @@ use crate::{
 use crate::{
 	index::BitIdx,
 	mem::bits_of,
-	order::BitOrder,
+	order::{
+        BitOrder,
+        Lsb0,
+        Msb0,
+    },
 	ptr::{
 		AddressExt,
 		BitSpan,
@@ -49,10 +53,37 @@ use crate::{
 	store::BitStore,
 };
 
+#[derive(Clone, Copy, Serialize, Deserialize, Eq, PartialEq)]
+enum SerializationBitOrder {
+    Msb0,
+    Lsb0,
+}
+
+impl SerializationBitOrder {
+    fn type_name(self) -> &'static str {
+        match self {
+            Self::Lsb0 => any::type_name::<Lsb0>(),
+            Self::Msb0 => any::type_name::<Msb0>(),
+        }
+    }
+}
+
+trait HasSerializationBitOrder {
+    const SERIALIZED_ORDER: SerializationBitOrder;
+}
+
+impl HasSerializationBitOrder for Lsb0 {
+    const SERIALIZED_ORDER: SerializationBitOrder = SerializationBitOrder::Lsb0;
+}
+
+impl HasSerializationBitOrder for Msb0 {
+    const SERIALIZED_ORDER: SerializationBitOrder = SerializationBitOrder::Msb0;
+}
+
 impl<T, O> Serialize for BitSlice<T, O>
 where
 	T: BitStore,
-	O: BitOrder,
+	O: BitOrder + HasSerializationBitOrder,
 	T::Mem: Serialize,
 {
 	fn serialize<S>(&self, serializer: S) -> super::Result<S>
@@ -60,7 +91,7 @@ where
 		let head = self.as_bitspan().head();
 		let mut state = serializer.serialize_struct("BitSeq", FIELDS.len())?;
 
-		state.serialize_field("order", &any::type_name::<O>())?;
+		state.serialize_field("order", &O::SERIALIZED_ORDER)?;
 		state.serialize_field("head", &head)?;
 		state.serialize_field("bits", &(self.len() as u64))?;
 		state.serialize_field("data", &self.domain())?;
@@ -73,7 +104,7 @@ where
 impl<T, O> Serialize for BitBox<T, O>
 where
 	T: BitStore,
-	O: BitOrder,
+	O: BitOrder + HasSerializationBitOrder,
 	BitSlice<T, O>: Serialize,
 {
 	fn serialize<S>(&self, serializer: S) -> super::Result<S>
@@ -86,7 +117,7 @@ where
 impl<T, O> Serialize for BitVec<T, O>
 where
 	T: BitStore,
-	O: BitOrder,
+	O: BitOrder + HasSerializationBitOrder,
 	BitSlice<T, O>: Serialize,
 {
 	fn serialize<S>(&self, serializer: S) -> super::Result<S>
@@ -96,7 +127,7 @@ where
 }
 
 impl<'de, O> Deserialize<'de> for &'de BitSlice<u8, O>
-where O: BitOrder
+where O: BitOrder + HasSerializationBitOrder
 {
 	fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
 	where D: Deserializer<'de> {
@@ -117,7 +148,7 @@ where O: BitOrder
 impl<'de, T, O> Deserialize<'de> for BitBox<T, O>
 where
 	T: BitStore,
-	O: BitOrder,
+	O: BitOrder + HasSerializationBitOrder,
 	Vec<T>: Deserialize<'de>,
 {
 	fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -131,7 +162,7 @@ where
 impl<'de, T, O> Deserialize<'de> for BitVec<T, O>
 where
 	T: BitStore,
-	O: BitOrder,
+	O: BitOrder + HasSerializationBitOrder,
 	Vec<T>: Deserialize<'de>,
 {
 	fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -159,7 +190,7 @@ where
 struct BitSeqVisitor<'de, T, O, In, Out, Func>
 where
 	T: 'de + BitStore,
-	O: BitOrder,
+	O: BitOrder + HasSerializationBitOrder,
 	In: Deserialize<'de>,
 	Func: FnOnce(In, BitIdx<T::Mem>, usize) -> Result<Out, BitSpanError<T>>,
 {
@@ -168,7 +199,7 @@ where
 	/// As well as a final output value.
 	out:   PhantomData<Result<Out, BitSpanError<T>>>,
 	/// The deserialized bit-ordering string.
-	order: Option<StringTarget<'de>>,
+	order: Option<SerializationBitOrder>,
 	/// The deserialized head-bit index.
 	head:  Option<BitIdx<T::Mem>>,
 	/// The deserialized bit-count.
@@ -183,7 +214,7 @@ where
 impl<'de, T, O, In, Out, Func> BitSeqVisitor<'de, T, O, In, Out, Func>
 where
 	T: 'de + BitStore,
-	O: BitOrder,
+	O: BitOrder + HasSerializationBitOrder,
 	In: Deserialize<'de>,
 	Func: FnOnce(In, BitIdx<T::Mem>, usize) -> Result<Out, BitSpanError<T>>,
 {
@@ -209,9 +240,9 @@ where
 		let bits = self.bits.take().ok_or_else(|| E::missing_field("bits"))?;
 		let data = self.data.take().ok_or_else(|| E::missing_field("data"))?;
 
-		let expected_order = any::type_name::<O>();
+		let expected_order = O::SERIALIZED_ORDER;
 		if order != expected_order {
-			return Err(E::invalid_type(Unexpected::Str(&*order), &self));
+			return Err(E::invalid_type(Unexpected::Str(order.type_name()), &self));
 		}
 		(self.func)(data, head, bits as usize).map_err(|_| todo!())
 	}
@@ -221,7 +252,7 @@ impl<'de, T, O, In, Out, Func> Visitor<'de>
 	for BitSeqVisitor<'de, T, O, In, Out, Func>
 where
 	T: 'de + BitStore,
-	O: BitOrder,
+	O: BitOrder + HasSerializationBitOrder,
 	In: Deserialize<'de>,
 	Func: FnOnce(In, BitIdx<T::Mem>, usize) -> Result<Out, BitSpanError<T>>,
 {
@@ -337,7 +368,7 @@ mod tests {
 				len:  4,
 			},
 			Token::Str("order"),
-			Token::Str(any::type_name::<Lsb0>()),
+			Token::UnitVariant { name: "SerializationBitOrder", variant: "Lsb0" },
 			Token::Str("head"),
 			Token::Struct {
 				name: "BitIdx",
@@ -363,7 +394,7 @@ mod tests {
 
 		let tokens = &[
 			Token::Seq { len: Some(4) },
-			Token::BorrowedStr(any::type_name::<Lsb0>()),
+			Token::UnitVariant { name: "SerializationBitOrder", variant: "Lsb0" },
 			Token::Seq { len: Some(2) },
 			Token::U8(8),
 			Token::U8(0),
@@ -381,7 +412,7 @@ mod tests {
 		assert_de_tokens_error::<&BitSlice<u8, Msb0>>(
 			&[
 				Token::Seq { len: Some(4) },
-				Token::BorrowedStr(any::type_name::<Lsb0>()),
+				Token::UnitVariant { name: "SerializationBitOrder", variant: "Lsb0" },
 				Token::Seq { len: Some(2) },
 				Token::U8(8),
 				Token::U8(1),
@@ -420,9 +451,9 @@ mod tests {
 					len:  2,
 				},
 				Token::BorrowedStr("order"),
-				Token::BorrowedStr(any::type_name::<Msb0>()),
+				Token::UnitVariant { name: "SerializationBitOrder", variant: "Msb0" },
 				Token::BorrowedStr("order"),
-				Token::BorrowedStr(any::type_name::<Msb0>()),
+				Token::UnitVariant { name: "SerializationBitOrder", variant: "Msb0" },
 				Token::StructEnd,
 			],
 			"duplicate field `order`",

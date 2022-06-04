@@ -8,7 +8,7 @@ fn serdes_slice() {
 	let json = serde_json::to_string(bits).unwrap();
 	assert_eq!(
 		json.trim(),
-		r#"{"order":"bitvec::order::Msb0","head":{"width":8,"index":0},"bits":9,"data":[178,128]}"#,
+		r#"{"order":"Msb0","head":{"width":8,"index":0},"bits":9,"data":[178,128]}"#,
 	);
 }
 
@@ -31,7 +31,7 @@ fn serdes_box() {
 	let json = serde_json::to_string(&bits).unwrap();
 	assert_eq!(
 		json.trim(),
-		r#"{"order":"bitvec::order::Lsb0","head":{"width":32,"index":0},"bits":5,"data":[18]}"#,
+		r#"{"order":"Lsb0","head":{"width":32,"index":0},"bits":5,"data":[18]}"#,
 	);
 	let deser: BitBox<u32, Lsb0> = serde_json::from_str(&json).unwrap();
 	assert_eq!(bits, deser);
@@ -44,7 +44,7 @@ fn serdes_vec() {
 	let json = serde_json::to_string(&bits).unwrap();
 	assert_eq!(
 		json.trim(),
-		r#"{"order":"bitvec::order::Lsb0","head":{"width":16,"index":0},"bits":5,"data":[13]}"#,
+		r#"{"order":"Lsb0","head":{"width":16,"index":0},"bits":5,"data":[13]}"#,
 	);
 	let deser: BitVec<u16, Lsb0> = serde_json::from_str(&json).unwrap();
 	assert_eq!(bits, deser);
